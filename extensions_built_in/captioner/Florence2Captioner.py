@@ -1,3 +1,6 @@
+# NOTE: Florence-2's repo ships a custom configuration_florence2.py loaded via
+# trust_remote_code that depends on attributes removed from PretrainedConfig in
+# transformers >= 4.49. The shim below keeps those models loadable.
 from transformers import AutoModelForCausalLM, AutoProcessor
 from collections import OrderedDict
 
@@ -9,6 +12,18 @@ from .BaseCaptioner import BaseCaptioner
 import transformers
 import logging
 import warnings
+
+from transformers import PretrainedConfig
+
+# Compatibility shim: Florence-2's custom configuration_florence2.py
+# accesses forced_bos_token_id / forced_eos_token_id, which were
+# removed from PretrainedConfig in transformers >= 4.49 (moved to
+# GenerationConfig). Restore them as class-level defaults so legacy
+# trust_remote_code configs keep working.
+if not hasattr(PretrainedConfig, "forced_bos_token_id"):
+    PretrainedConfig.forced_bos_token_id = None
+if not hasattr(PretrainedConfig, "forced_eos_token_id"):
+    PretrainedConfig.forced_eos_token_id = None
 
 transformers.logging.set_verbosity_error()
 warnings.filterwarnings("ignore")
