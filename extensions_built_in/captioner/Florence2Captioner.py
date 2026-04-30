@@ -316,6 +316,12 @@ class Florence2Captioner(BaseCaptioner):
                 max_new_tokens=self.caption_config.max_new_tokens,
                 num_beams=3,
                 do_sample=False,
+                use_cache=False,  # Florence-2's decoder forward predates the
+                                  # EncoderDecoderCache class API; without
+                                  # disabling cache, transformers >= 4.49
+                                  # raises "'EncoderDecoderCache' object is
+                                  # not subscriptable" inside
+                                  # modeling_florence2.py.
             )
 
             generated_text = self.processor.batch_decode(
