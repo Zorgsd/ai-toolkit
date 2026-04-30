@@ -225,6 +225,39 @@ class Florence2Captioner(BaseCaptioner):
             f"{self.model.language_model.generation_config is not None}",
             flush=True,
         )
+        # Florence-2 (BART-based encoder-decoder) needs decoder_start_token_id,
+        # bos_token_id, eos_token_id, pad_token_id on generation_config.
+        # transformers >=4.49 GenerationMixin no longer falls back to reading
+        # them from model.config -- they must be set explicitly.
+        text_cfg = getattr(self.model.config, 'text_config', None)
+        inner_gen_cfg = self.model.language_model.generation_config
+
+        # Florence-2 BART defaults from its tokenizer/config
+        _FLORENCE2_BART_DEFAULTS = {
+            'decoder_start_token_id': 2,  # </s>
+            'bos_token_id': 0,             # <s>
+            'eos_token_id': 2,             # </s>
+            'pad_token_id': 1,             # <pad>
+        }
+
+        for token_attr, default_val in _FLORENCE2_BART_DEFAULTS.items():
+            val = None
+            if text_cfg is not None:
+                val = getattr(text_cfg, token_attr, None)
+            if val is None:
+                val = getattr(self.model.config, token_attr, None)
+            if val is None:
+                val = default_val
+            setattr(inner_gen_cfg, token_attr, val)
+
+        print(
+            f"[Florence2 DEBUG] tokens on inner_gen_cfg: "
+            f"decoder_start={inner_gen_cfg.decoder_start_token_id}, "
+            f"bos={inner_gen_cfg.bos_token_id}, "
+            f"eos={inner_gen_cfg.eos_token_id}, "
+            f"pad={inner_gen_cfg.pad_token_id}",
+            flush=True,
+        )
         if not self.caption_config.low_vram:
             self.model.to(self.device_torch)
         if self.caption_config.quantize:
