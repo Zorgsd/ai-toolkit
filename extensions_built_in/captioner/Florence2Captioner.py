@@ -163,6 +163,22 @@ class Florence2Captioner(BaseCaptioner):
             attn_implementation="eager",
             device_map="cpu",
         )
+        # Compatibility shim: in transformers >= 4.49 GenerationMixin is no
+        # longer auto-inherited by base model classes -- models must declare
+        # it explicitly. Florence-2's modeling_florence2.py predates that
+        # contract, so the inner Florence2LanguageForConditionalGeneration
+        # has no .generate() and self.model.generate() crashes when it
+        # delegates inward. Mix GenerationMixin into the inner LM class's
+        # MRO at runtime. We do this lazily here (not in the module-level
+        # shim block) because the class only exists once trust_remote_code
+        # has executed modeling_florence2.py during from_pretrained.
+        # Inject as a base class instead of copying methods so the rest of
+        # GenerationMixin's machinery (cache classes, beam search hooks,
+        # etc.) stays internally consistent.
+        from transformers import GenerationMixin
+        inner_lm_cls = type(self.model.language_model)
+        if not hasattr(inner_lm_cls, "generate"):
+            inner_lm_cls.__bases__ = (GenerationMixin,) + inner_lm_cls.__bases__
         if not self.caption_config.low_vram:
             self.model.to(self.device_torch)
         if self.caption_config.quantize:
@@ -190,8 +206,23 @@ class Florence2Captioner(BaseCaptioner):
             return prompt
         return "<MORE_DETAILED_CAPTION>"
 
+    def _pad_to_square(self, img):
+        """Pad a PIL image with black to make it square. Florence-2's
+        DaViT vision encoder requires square input."""
+        from PIL import Image
+        w, h = img.size
+        if w == h:
+            return img
+        side = max(w, h)
+        padded = Image.new(img.mode, (side, side), color=0)
+        paste_x = (side - w) // 2
+        paste_y = (side - h) // 2
+        padded.paste(img, (paste_x, paste_y))
+        return padded
+
     def get_caption_for_file(self, file_path: str) -> str:
         img = self.load_pil_image(file_path, max_res=self.caption_config.max_res)
+        img = self._pad_to_square(img)
         try:
             task = self._resolve_task()
             inputs = self.processor(
