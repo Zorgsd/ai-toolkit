@@ -28,15 +28,19 @@ if not hasattr(PretrainedConfig, "forced_eos_token_id"):
 
 # Compatibility shim: transformers 4.49+ rewrote
 # get_expanded_tied_weights_keys to assume _tied_weights_keys is a
-# dict[str, str] (mapping target -> source) and unconditionally calls
-# .keys() / .values() on it. Florence-2's modeling_florence2.py
-# predates that contract and declares the older list[str] format.
-# When we see a list, return it unchanged -- the pre-4.49 API already
-# gave the fully-expanded key set with no per-key expansion needed,
-# and didn't accept any parameters, so we drop *args/**kwargs on the
-# list branch on purpose. The dict branch forwards everything so
-# parameters added by future transformers versions (e.g. the current
-# all_submodels=False) keep flowing through to the upstream impl.
+# dict[str, str] (mapping target -> source). The new contract isn't
+# just at the call site -- post_init stores the result as
+# self.all_tied_weights_keys and then calls .update() on it, so the
+# return value MUST be a dict. Returning the legacy list unchanged
+# (an earlier version of this shim) crashed at that .update() call.
+# Florence-2's modeling_florence2.py declares the older list[str]
+# format, so we promote it to a self-tied dict {k: k for k in tied}.
+# Self-tying matches the legacy semantics: each listed weight is
+# tied to a key of the same name elsewhere in the model.
+# *args/**kwargs are dropped on the list branch on purpose (the
+# pre-4.49 API took no parameters) and forwarded on the dict branch
+# so parameters added by future transformers versions (e.g. the
+# current all_submodels=False) keep flowing through.
 # Method patching (vs. data-attribute setattr) is safe here because
 # Python's bound-method lookup walks the class MRO normally and is
 # not routed through nn.Module.__getattr__.
@@ -47,7 +51,13 @@ if _orig_get_expanded_tied_weights_keys is not None:
     def _get_expanded_tied_weights_keys_compat(self, *args, **kwargs):
         tied = getattr(self, "_tied_weights_keys", None)
         if isinstance(tied, list):
-            return list(tied)
+            # Convert legacy list[str] format to self-tied dict[str, str].
+            # transformers >= 4.49 post_init assumes the result is a dict
+            # and calls .update() on it, so list cannot be preserved here.
+            # Self-tie ({k: k for k in tied}) means each key maps to itself,
+            # which matches the legacy semantics: the listed weight is
+            # tied to a key of the same name elsewhere in the model.
+            return {k: k for k in tied}
         return _orig_get_expanded_tied_weights_keys(self, *args, **kwargs)
 
     PreTrainedModel.get_expanded_tied_weights_keys = (
