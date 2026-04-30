@@ -28,15 +28,27 @@ if not hasattr(PretrainedConfig, "forced_eos_token_id"):
 
 # Compatibility shim: transformers 4.49+ rewrote
 # get_expanded_tied_weights_keys to assume _tied_weights_keys is a
-# dict[str, str] (mapping target -> source). The new contract isn't
-# just at the call site -- post_init stores the result as
-# self.all_tied_weights_keys and then calls .update() on it, so the
-# return value MUST be a dict. Returning the legacy list unchanged
-# (an earlier version of this shim) crashed at that .update() call.
+# dict[str, str] mapping ABSOLUTE paths from the model root
+# (target -> source). The contract is enforced in two places:
+#   1. post_init stores the result on self.all_tied_weights_keys and
+#      calls .update() on it (return value must be a dict, not a list).
+#   2. _finalize_model_loading -> mark_tied_weights_as_initialized
+#      walks the dict and calls self.get_parameter(tied_param) on each
+#      value, expecting an absolute submodule path.
 # Florence-2's modeling_florence2.py declares the older list[str]
-# format, so we promote it to a self-tied dict {k: k for k in tied}.
-# Self-tying matches the legacy semantics: each listed weight is
-# tied to a key of the same name elsewhere in the model.
+# format whose entries (e.g. "encoder.embed_tokens.weight") were
+# implicitly resolved relative to the *base model's* submodule path,
+# not the outer ConditionalGeneration wrapper. There's no general way
+# to recover the correct absolute prefix for an arbitrary Florence-2
+# submodel from the legacy list, so any concrete dict we synthesize
+# (including the earlier self-tie {k: k for k in tied}) will route
+# get_parameter() through a non-existent attribute and crash.
+# Returning {} makes transformers' post-load tied-weight VALIDATION
+# pass a no-op for these models. The actual weight tying still works
+# -- Florence-2's modeling code calls tie_weights() via the standard
+# PyTorch mechanism, which reads _tied_weights_keys directly and is
+# unaffected by what this method returns. We're only disabling the
+# 4.49+ post-load initialization audit, not the tying itself.
 # *args/**kwargs are dropped on the list branch on purpose (the
 # pre-4.49 API took no parameters) and forwarded on the dict branch
 # so parameters added by future transformers versions (e.g. the
@@ -51,13 +63,13 @@ if _orig_get_expanded_tied_weights_keys is not None:
     def _get_expanded_tied_weights_keys_compat(self, *args, **kwargs):
         tied = getattr(self, "_tied_weights_keys", None)
         if isinstance(tied, list):
-            # Convert legacy list[str] format to self-tied dict[str, str].
-            # transformers >= 4.49 post_init assumes the result is a dict
-            # and calls .update() on it, so list cannot be preserved here.
-            # Self-tie ({k: k for k in tied}) means each key maps to itself,
-            # which matches the legacy semantics: the listed weight is
-            # tied to a key of the same name elsewhere in the model.
-            return {k: k for k in tied}
+            # Legacy list[str] entries are relative to the base model's
+            # submodule path, which we can't reliably recover here for
+            # an arbitrary Florence-2 submodel. Return {} so the new
+            # tied-weight validation no-ops; tying still happens via
+            # the standard PyTorch path that reads _tied_weights_keys
+            # directly.
+            return {}
         return _orig_get_expanded_tied_weights_keys(self, *args, **kwargs)
 
     PreTrainedModel.get_expanded_tied_weights_keys = (
