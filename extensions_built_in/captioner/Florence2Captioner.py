@@ -15,10 +15,30 @@ warnings.filterwarnings("ignore")
 logging.disable(logging.WARNING)
 
 
+# Task token compatibility by model family. Unknown prompts fall back to
+# <MORE_DETAILED_CAPTION>; using a token a model wasn't trained on usually
+# yields a degenerate or empty caption.
+#   microsoft/Florence-2-*, thwri/CogFlorence-2.*-Large
+#       -> <CAPTION>, <DETAILED_CAPTION>, <MORE_DETAILED_CAPTION>
+#   HuggingFaceM4/Florence-2-DocVQA
+#       -> <CAPTION>, <DETAILED_CAPTION>, <MORE_DETAILED_CAPTION>
+#   MiaoshouAI/Florence-2-*-PromptGen-v1.5
+#       -> the three above + <GENERATE_TAGS>, <MIXED_CAPTION>
+#   MiaoshouAI/Florence-2-*-PromptGen-v2.0
+#       -> the v1.5 set + <ANALYZE>, <MIXED_CAPTION_PLUS>
+#   gokaygokay/Florence-2-Flux-Large, gokaygokay/Florence-2-SD3-Captioner
+#       -> <DESCRIPTION>
+#   PJMixers-Images/Florence-2-base-Castollux-v0.5
+#       -> <CAPTION>, <DETAILED_CAPTION>, <MORE_DETAILED_CAPTION>
 VALID_FLORENCE2_TASKS = (
     "<CAPTION>",
     "<DETAILED_CAPTION>",
     "<MORE_DETAILED_CAPTION>",
+    "<GENERATE_TAGS>",
+    "<MIXED_CAPTION>",
+    "<MIXED_CAPTION_PLUS>",
+    "<ANALYZE>",
+    "<DESCRIPTION>",
 )
 
 
