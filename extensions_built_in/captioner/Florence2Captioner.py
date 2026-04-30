@@ -286,14 +286,15 @@ class Florence2Captioner(BaseCaptioner):
         return "<MORE_DETAILED_CAPTION>"
 
     def _pad_to_square(self, img):
-        """Pad a PIL image with black to make it square. Florence-2's
-        DaViT vision encoder requires square input."""
         from PIL import Image
         w, h = img.size
         if w == h:
             return img
         side = max(w, h)
-        padded = Image.new(img.mode, (side, side), color=0)
+        # White pad -- Florence-2's vision encoder is sensitive to black
+        # borders (it was trained on natural images). White matches what
+        # ComfyUI's Florence-2 nodes do and produces coherent captions.
+        padded = Image.new(img.mode, (side, side), color=(255, 255, 255))
         paste_x = (side - w) // 2
         paste_y = (side - h) // 2
         padded.paste(img, (paste_x, paste_y))
@@ -325,7 +326,7 @@ class Florence2Captioner(BaseCaptioner):
             )
 
             generated_text = self.processor.batch_decode(
-                generated_ids, skip_special_tokens=False
+                generated_ids, skip_special_tokens=True
             )[0]
 
             parsed = self.processor.post_process_generation(
