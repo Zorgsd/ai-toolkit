@@ -1,6 +1,7 @@
-# NOTE: Florence-2's repo ships a custom configuration_florence2.py loaded via
-# trust_remote_code that depends on attributes removed from PretrainedConfig in
-# transformers >= 4.49. The shim below keeps those models loadable.
+# NOTE: Florence-2's modeling and configuration modules (loaded via
+# trust_remote_code) predate several transformers >= 4.49 API contracts. The
+# shims below restore the older defaults so the legacy trust_remote_code
+# modules keep working without forking the upstream Florence-2 repos.
 from transformers import AutoModelForCausalLM, AutoProcessor
 from collections import OrderedDict
 
@@ -13,7 +14,7 @@ import transformers
 import logging
 import warnings
 
-from transformers import PretrainedConfig
+from transformers import PretrainedConfig, PreTrainedModel
 
 # Compatibility shim: Florence-2's custom configuration_florence2.py
 # accesses forced_bos_token_id / forced_eos_token_id, which were
@@ -24,6 +25,30 @@ if not hasattr(PretrainedConfig, "forced_bos_token_id"):
     PretrainedConfig.forced_bos_token_id = None
 if not hasattr(PretrainedConfig, "forced_eos_token_id"):
     PretrainedConfig.forced_eos_token_id = None
+
+# Compatibility shim: transformers 4.49+ rewrote
+# get_expanded_tied_weights_keys to assume _tied_weights_keys is a
+# dict[str, str] (mapping target -> source) and unconditionally calls
+# .keys() / .values() on it. Florence-2's modeling_florence2.py
+# predates that contract and declares the older list[str] format.
+# When we see a list, return it unchanged -- the pre-4.49 API already
+# gave the fully-expanded key set with no per-key expansion needed.
+# Method patching (vs. data-attribute setattr) is safe here because
+# Python's bound-method lookup walks the class MRO normally and is
+# not routed through nn.Module.__getattr__.
+_orig_get_expanded_tied_weights_keys = getattr(
+    PreTrainedModel, "get_expanded_tied_weights_keys", None
+)
+if _orig_get_expanded_tied_weights_keys is not None:
+    def _get_expanded_tied_weights_keys_compat(self):
+        tied = getattr(self, "_tied_weights_keys", None)
+        if isinstance(tied, list):
+            return list(tied)
+        return _orig_get_expanded_tied_weights_keys(self)
+
+    PreTrainedModel.get_expanded_tied_weights_keys = (
+        _get_expanded_tied_weights_keys_compat
+    )
 
 transformers.logging.set_verbosity_error()
 warnings.filterwarnings("ignore")
