@@ -14,7 +14,7 @@ import transformers
 import logging
 import warnings
 
-from transformers import PretrainedConfig, PreTrainedModel
+from transformers import PretrainedConfig, PreTrainedModel, RobertaTokenizer
 
 # Compatibility shim: Florence-2's custom configuration_florence2.py
 # accesses forced_bos_token_id / forced_eos_token_id, which were
@@ -74,6 +74,44 @@ if _orig_get_expanded_tied_weights_keys is not None:
 
     PreTrainedModel.get_expanded_tied_weights_keys = (
         _get_expanded_tied_weights_keys_compat
+    )
+
+# Compatibility shim: transformers >= 4.49 dropped the public
+# additional_special_tokens property from the slow tokenizer path,
+# leaving it only on the *Fast variants. Florence-2's
+# processing_florence2.py reads tokenizer.additional_special_tokens
+# unconditionally during processor construction, and AutoProcessor's
+# trust_remote_code path silently drops use_fast=True in its kwargs
+# filtering, so we can't reach the Fast tokenizer through the normal
+# from_pretrained call. Restore the property on the slow class only
+# (RobertaTokenizer, not its parent PreTrainedTokenizer): scoping it
+# narrowly avoids silently changing behavior for every other slow
+# tokenizer in the project (T5, CLIP, BERT, ...).
+# Property patching (vs. data-attribute setattr on a model) is safe
+# for the same reason method patching is: Python's descriptor protocol
+# resolves class-level descriptors via the MRO and is not routed
+# through nn.Module.__getattr__ -- and PreTrainedTokenizer is a plain
+# object anyway, so __getattr__ semantics aren't even in play.
+if not hasattr(RobertaTokenizer, "additional_special_tokens"):
+    def _additional_special_tokens_compat_get(self):
+        # Prefer the internal that older code still populates during
+        # init; fall back to the special_tokens_map view, which both
+        # slow and fast tokenizers continue to expose.
+        val = getattr(self, "_additional_special_tokens", None)
+        if val is not None:
+            return list(val)
+        return list(
+            self.special_tokens_map.get("additional_special_tokens", [])
+        )
+
+    def _additional_special_tokens_compat_set(self, value):
+        self._additional_special_tokens = (
+            list(value) if value is not None else []
+        )
+
+    RobertaTokenizer.additional_special_tokens = property(
+        _additional_special_tokens_compat_get,
+        _additional_special_tokens_compat_set,
     )
 
 transformers.logging.set_verbosity_error()
@@ -138,14 +176,9 @@ class Florence2Captioner(BaseCaptioner):
                 # quanto cannot always introspect; fall back to unquantized.
                 print(f"Florence-2 quantization skipped: {e}")
                 flush()
-        # use_fast=True forces RobertaTokenizerFast. The slow RobertaTokenizer
-        # in transformers >= 4.49 no longer exposes additional_special_tokens
-        # (only the *Fast variant does), and Florence-2's processing_florence2.py
-        # reads that attribute unconditionally during processor construction.
         self.processor = AutoProcessor.from_pretrained(
             self.caption_config.model_name_or_path,
             trust_remote_code=True,
-            use_fast=True,
         )
         if self.caption_config.low_vram:
             self.model.to(self.device_torch)
