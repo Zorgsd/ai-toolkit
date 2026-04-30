@@ -63,10 +63,15 @@ class Florence2Captioner(BaseCaptioner):
 
     def load_model(self):
         self.print_and_status_update("Loading Florence-2 model")
+        # attn_implementation="eager" forces transformers to skip the
+        # _check_and_adjust_attn_implementation auto-detection path, which in
+        # 4.49+ reads class-level _supports_sdpa / _supports_flash_attn_2
+        # flags that Florence-2's modeling_florence2.py never declared.
         self.model = AutoModelForCausalLM.from_pretrained(
             self.caption_config.model_name_or_path,
             dtype=self.torch_dtype,
             trust_remote_code=True,
+            attn_implementation="eager",
             device_map="cpu",
         )
         if not self.caption_config.low_vram:
