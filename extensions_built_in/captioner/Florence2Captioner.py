@@ -138,9 +138,14 @@ class Florence2Captioner(BaseCaptioner):
                 # quanto cannot always introspect; fall back to unquantized.
                 print(f"Florence-2 quantization skipped: {e}")
                 flush()
+        # use_fast=True forces RobertaTokenizerFast. The slow RobertaTokenizer
+        # in transformers >= 4.49 no longer exposes additional_special_tokens
+        # (only the *Fast variant does), and Florence-2's processing_florence2.py
+        # reads that attribute unconditionally during processor construction.
         self.processor = AutoProcessor.from_pretrained(
             self.caption_config.model_name_or_path,
             trust_remote_code=True,
+            use_fast=True,
         )
         if self.caption_config.low_vram:
             self.model.to(self.device_torch)
