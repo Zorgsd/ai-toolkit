@@ -32,7 +32,11 @@ if not hasattr(PretrainedConfig, "forced_eos_token_id"):
 # .keys() / .values() on it. Florence-2's modeling_florence2.py
 # predates that contract and declares the older list[str] format.
 # When we see a list, return it unchanged -- the pre-4.49 API already
-# gave the fully-expanded key set with no per-key expansion needed.
+# gave the fully-expanded key set with no per-key expansion needed,
+# and didn't accept any parameters, so we drop *args/**kwargs on the
+# list branch on purpose. The dict branch forwards everything so
+# parameters added by future transformers versions (e.g. the current
+# all_submodels=False) keep flowing through to the upstream impl.
 # Method patching (vs. data-attribute setattr) is safe here because
 # Python's bound-method lookup walks the class MRO normally and is
 # not routed through nn.Module.__getattr__.
@@ -40,11 +44,11 @@ _orig_get_expanded_tied_weights_keys = getattr(
     PreTrainedModel, "get_expanded_tied_weights_keys", None
 )
 if _orig_get_expanded_tied_weights_keys is not None:
-    def _get_expanded_tied_weights_keys_compat(self):
+    def _get_expanded_tied_weights_keys_compat(self, *args, **kwargs):
         tied = getattr(self, "_tied_weights_keys", None)
         if isinstance(tied, list):
             return list(tied)
-        return _orig_get_expanded_tied_weights_keys(self)
+        return _orig_get_expanded_tied_weights_keys(self, *args, **kwargs)
 
     PreTrainedModel.get_expanded_tied_weights_keys = (
         _get_expanded_tied_weights_keys_compat
