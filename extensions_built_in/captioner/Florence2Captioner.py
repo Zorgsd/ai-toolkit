@@ -177,8 +177,54 @@ class Florence2Captioner(BaseCaptioner):
         # etc.) stays internally consistent.
         from transformers import GenerationMixin
         inner_lm_cls = type(self.model.language_model)
+        print(
+            f"[Florence2 DEBUG] outer model class: {type(self.model).__name__}",
+            flush=True,
+        )
+        print(
+            f"[Florence2 DEBUG] inner_lm_cls: {inner_lm_cls.__name__}",
+            flush=True,
+        )
+        print(
+            f"[Florence2 DEBUG] before patch -- hasattr(inner_lm_cls, 'generate') = "
+            f"{hasattr(inner_lm_cls, 'generate')}",
+            flush=True,
+        )
+        print(
+            f"[Florence2 DEBUG] before patch -- inner_lm_cls.__mro__ = "
+            f"{str(inner_lm_cls.__mro__)}",
+            flush=True,
+        )
         if not hasattr(inner_lm_cls, "generate"):
             inner_lm_cls.__bases__ = (GenerationMixin,) + inner_lm_cls.__bases__
+        print(
+            f"[Florence2 DEBUG] after patch  -- hasattr(inner_lm_cls, 'generate') = "
+            f"{hasattr(inner_lm_cls, 'generate')}",
+            flush=True,
+        )
+        print(
+            f"[Florence2 DEBUG] after patch  -- inner_lm_cls.__mro__ = "
+            f"{str(inner_lm_cls.__mro__)}",
+            flush=True,
+        )
+        # Florence-2's outer wrapper has generation_config (loaded from
+        # generation_config.json), but the inner language model doesn't --
+        # transformers >= 4.49's GenerationMixin.generate() reads
+        # self.generation_config and crashes if it's missing. Copy the outer
+        # config down so the delegated generate() call can find it.
+        if hasattr(self.model, 'generation_config') and self.model.generation_config is not None:
+            self.model.language_model.generation_config = self.model.generation_config
+        else:
+            # Fallback: build a default GenerationConfig if the outer model
+            # doesn't have one either (shouldn't happen for Florence-2 but
+            # belt-and-braces).
+            from transformers import GenerationConfig
+            self.model.language_model.generation_config = GenerationConfig()
+        print(
+            f"[Florence2 DEBUG] inner generation_config set: "
+            f"{self.model.language_model.generation_config is not None}",
+            flush=True,
+        )
         if not self.caption_config.low_vram:
             self.model.to(self.device_torch)
         if self.caption_config.quantize:
