@@ -286,6 +286,43 @@ class Florence2Captioner(BaseCaptioner):
             self.caption_config.model_name_or_path,
             trust_remote_code=True,
         )
+        # Florence-2's processor tokenizer doesn't auto-register task tokens
+        # as special, so BPE splits e.g. "<MORE_DETAILED_CAPTION>" into 7
+        # fragment tokens. Explicitly add them as special tokens so they
+        # tokenize as a single atomic id -- matches what ComfyUI's
+        # Florence2Run node does internally.
+        FLORENCE2_TASK_TOKENS = [
+            '<CAPTION>',
+            '<DETAILED_CAPTION>',
+            '<MORE_DETAILED_CAPTION>',
+            '<OD>',
+            '<DENSE_REGION_CAPTION>',
+            '<REGION_PROPOSAL>',
+            '<CAPTION_TO_PHRASE_GROUNDING>',
+            '<REFERRING_EXPRESSION_SEGMENTATION>',
+            '<REGION_TO_SEGMENTATION>',
+            '<OPEN_VOCABULARY_DETECTION>',
+            '<REGION_TO_CATEGORY>',
+            '<REGION_TO_DESCRIPTION>',
+            '<OCR>',
+            '<OCR_WITH_REGION>',
+            # MiaoshouAI PromptGen-specific tokens
+            '<GENERATE_TAGS>',
+            '<MIXED_CAPTION>',
+            '<MIXED_CAPTION_PLUS>',
+            '<ANALYZE>',
+            # gokaygokay-specific
+            '<DESCRIPTION>',
+        ]
+        num_added = self.processor.tokenizer.add_tokens(
+            FLORENCE2_TASK_TOKENS,
+            special_tokens=True,
+        )
+        print(
+            f"[Florence2 DEBUG] added {num_added} task tokens as special; "
+            f"sample: {self.processor.tokenizer.tokenize('<MORE_DETAILED_CAPTION>')}",
+            flush=True,
+        )
         if self.caption_config.low_vram:
             self.model.to(self.device_torch)
         flush()
