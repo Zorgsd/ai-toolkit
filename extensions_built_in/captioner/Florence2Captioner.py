@@ -5,6 +5,7 @@
 from transformers import AutoModelForCausalLM, AutoProcessor
 from collections import OrderedDict
 
+import torch
 from optimum.quanto import freeze
 from toolkit.basic import flush
 from toolkit.util.quantize import quantize, get_qtype
@@ -152,13 +153,23 @@ class Florence2Captioner(BaseCaptioner):
 
     def load_model(self):
         self.print_and_status_update("Loading Florence-2 model")
+        # Florence-2 was trained in fp16; bf16 (the ai-toolkit default) degrades
+        # the visual encoder enough to produce nonsense captions. ComfyUI's
+        # Florence-2 nodes use precision="fp16" for the same reason.
+        florence2_dtype = torch.float16
+        self._florence2_dtype = florence2_dtype
+        print(
+            f"[Florence2 DEBUG] forcing dtype to {florence2_dtype} "
+            f"(was {self.torch_dtype})",
+            flush=True,
+        )
         # attn_implementation="eager" forces transformers to skip the
         # _check_and_adjust_attn_implementation auto-detection path, which in
         # 4.49+ reads class-level _supports_sdpa / _supports_flash_attn_2
         # flags that Florence-2's modeling_florence2.py never declared.
         self.model = AutoModelForCausalLM.from_pretrained(
             self.caption_config.model_name_or_path,
-            dtype=self.torch_dtype,
+            dtype=florence2_dtype,
             trust_remote_code=True,
             attn_implementation="eager",
             device_map="cpu",
@@ -309,7 +320,19 @@ class Florence2Captioner(BaseCaptioner):
                 text=task,
                 images=img,
                 return_tensors="pt",
-            ).to(self.device_torch, self.torch_dtype)
+            ).to(self.device_torch, self._florence2_dtype)
+
+            input_ids = inputs["input_ids"]
+            print(
+                f"[Florence2 DEBUG] task='{task}', input_ids shape={input_ids.shape}, "
+                f"first 10 tokens={input_ids[0][:10].tolist()}",
+                flush=True,
+            )
+            print(
+                f"[Florence2 DEBUG] decoded input: "
+                f"'{self.processor.tokenizer.decode(input_ids[0])}'",
+                flush=True,
+            )
 
             generated_ids = self.model.generate(
                 input_ids=inputs["input_ids"],
